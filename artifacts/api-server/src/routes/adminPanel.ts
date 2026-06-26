@@ -8,6 +8,7 @@ import {
   waMessagesTable,
   appLogsTable,
   appBackupsTable,
+  appSettingsTable,
 } from "@workspace/db";
 import { createHmac } from "crypto";
 import { multiWA } from "../services/multiWhatsapp.js";
@@ -95,6 +96,37 @@ router.post("/admin-panel/user/revoke", async (req, res): Promise<void> => {
   await db.update(panelUserTable).set({ approved: false, approvedAt: null }).where(eq(panelUserTable.id, user.id));
   await logEvent(`Admin revoked user access: ${user.username}`, "warn", "admin");
   res.json({ success: true });
+});
+
+// ── Pairing brand code (editable from admin) ──────────────────────
+
+async function getAppSettings() {
+  let [s] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.id, 1));
+  if (!s) [s] = await db.insert(appSettingsTable).values({ id: 1 }).returning();
+  return s;
+}
+
+router.get("/admin-panel/pairing-code", async (req, res): Promise<void> => {
+  if (!(await requireAdmin(req, res))) return;
+  const s = await getAppSettings();
+  res.json({ pairingBrandCode: s.pairingBrandCode });
+});
+
+router.put("/admin-panel/pairing-code", async (req, res): Promise<void> => {
+  if (!(await requireAdmin(req, res))) return;
+  const raw = String(req.body?.pairingBrandCode ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (raw.length !== 8) {
+    res.status(400).json({ error: "Pairing code theek 8 characters (A-Z, 0-9) ka hona chahiye" });
+    return;
+  }
+  await getAppSettings();
+  const [updated] = await db
+    .update(appSettingsTable)
+    .set({ pairingBrandCode: raw, updatedAt: new Date() })
+    .where(eq(appSettingsTable.id, 1))
+    .returning();
+  await logEvent(`Admin set pairing code to ${raw}`, "info", "admin");
+  res.json({ pairingBrandCode: updated.pairingBrandCode });
 });
 
 // ── Oversight: chats + messages ───────────────────────────────────

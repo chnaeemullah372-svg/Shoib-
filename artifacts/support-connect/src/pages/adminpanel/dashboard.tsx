@@ -5,7 +5,7 @@ import {
   ShieldCheck, Users, MessageSquare, ArrowDownLeft, ArrowUpRight, LogOut,
   Download, RefreshCw, Wrench, Trash2, CheckCircle2, XCircle, Eye, EyeOff,
   Loader2, Activity, Power, LayoutDashboard, MessagesSquare, HardDrive,
-  Database, ScrollText, Menu, X, Circle, Search, ChevronLeft, Crown,
+  Database, ScrollText, Menu, X, Circle, Search, ChevronLeft, Crown, KeyRound,
 } from "lucide-react";
 import { isVip, setVip } from "@/lib/theme";
 
@@ -79,6 +79,9 @@ export default function AdminDashboard() {
   const [vip, setVipState] = useState(isVip());
   const [toolMsg, setToolMsg] = useState("");
   const [search, setSearch] = useState("");
+  const [brandCode, setBrandCode] = useState("");
+  const [brandMsg, setBrandMsg] = useState("");
+  const [brandBusy, setBrandBusy] = useState(false);
 
   const loadAll = useCallback(async () => {
     try {
@@ -110,6 +113,7 @@ export default function AdminDashboard() {
       return;
     }
     admin.get("/admin/me").then((r) => setAdminName(r.username)).catch(() => logout());
+    admin.get("/admin-panel/pairing-code").then((r) => setBrandCode(r.pairingBrandCode || "")).catch(() => {});
     loadAll();
     const t = setInterval(loadAll, 5000);
     return () => clearInterval(t);
@@ -146,6 +150,21 @@ export default function AdminDashboard() {
 
   async function approve() { await admin.post("/admin-panel/user/approve"); loadAll(); }
   async function revoke() { await admin.post("/admin-panel/user/revoke"); loadAll(); }
+
+  async function saveBrand() {
+    setBrandMsg("");
+    if (brandCode.length !== 8) { setBrandMsg("Theek 8 characters likhein (A-Z, 0-9)."); return; }
+    setBrandBusy(true);
+    try {
+      const r = await admin.put("/admin-panel/pairing-code", { pairingBrandCode: brandCode });
+      setBrandCode(r.pairingBrandCode || brandCode);
+      setBrandMsg("Pairing code save ho gaya ✓");
+    } catch (e: any) {
+      setBrandMsg(e?.message || "Save nahi hua.");
+    } finally {
+      setBrandBusy(false);
+    }
+  }
 
   async function runTool(path: string, label: string) {
     setToolMsg("");
@@ -455,7 +474,29 @@ export default function AdminDashboard() {
           )}
 
           {view === "tools" && (
-            <div className="max-w-lg">
+            <div className="max-w-lg space-y-4">
+              <Card title="Pairing Code Name" icon={KeyRound}>
+                <p className="text-xs text-muted-foreground mb-3">
+                  Jo bhi yahan likhenge wohi code WhatsApp connect karte waqt OTP ki jagah dikhega. Theek 8 characters (sirf letters A–Z aur numbers 0–9).
+                </p>
+                <input
+                  value={brandCode}
+                  onChange={(e) => setBrandCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8))}
+                  maxLength={8}
+                  placeholder="HASANALI"
+                  className="w-full rounded-lg bg-background border border-border px-4 py-3 text-center text-xl font-extrabold tracking-[0.35em] uppercase outline-none focus:border-primary"
+                />
+                <button
+                  onClick={saveBrand}
+                  disabled={brandBusy}
+                  className="mt-3 w-full rounded-lg bg-primary text-primary-foreground text-sm py-2.5 font-semibold flex items-center justify-center gap-2 disabled:opacity-60"
+                >
+                  {brandBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" />}
+                  Save Pairing Code
+                </button>
+                {brandMsg && <p className="text-xs text-center text-muted-foreground pt-2">{brandMsg}</p>}
+              </Card>
+
               <Card title="Maintenance Tools" icon={Wrench}>
                 <p className="text-xs text-muted-foreground mb-4">Diagnose and repair the WhatsApp connection. These do not send any messages.</p>
                 <div className="space-y-2">

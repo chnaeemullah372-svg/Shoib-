@@ -12,3 +12,9 @@ id = "YK2NOGRfnRJd9F8GgmMYX"
 uri = "file://hamarinews_src.zip"
 type = "unspecified"
 title = "HamariNews Source Code"
+
+[[outputs]]
+id = "magLGfRyYFsNJ8tUuNRlR"
+uri = "file://support-connect-fresh.zip"
+type = "unspecified"
+title = "Support Connect — Fresh Complete Project (no videos)"
