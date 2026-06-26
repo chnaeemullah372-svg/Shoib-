@@ -1,0 +1,14 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "TolWqteppm6rUqNJ7u_rg"
+uri = "file://hamarinews-support.zip"
+type = "unspecified"
+title = "HamariNews Support — Complete Source Code"
+
+[[outputs]]
+id = "YK2NOGRfnRJd9F8GgmMYX"
+uri = "file://hamarinews_src.zip"
+type = "unspecified"
+title = "HamariNews Source Code"

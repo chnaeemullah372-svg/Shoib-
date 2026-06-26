@@ -1,0 +1,1 @@
+- [WhatsApp panel decisions](whatsapp-panel.md) — local QR rendering (no third-party leak) + admin is monitoring-only (no send route).
