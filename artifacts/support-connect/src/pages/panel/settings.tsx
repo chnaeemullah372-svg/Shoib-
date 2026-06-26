@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import Shell, { useRequirePanelAuth } from "./Shell";
 import { panel } from "@/lib/panelApi";
-import { Loader2, Save, User, Bell, DatabaseBackup, Globe, CalendarClock, Trash2, Info, Crown } from "lucide-react";
+import { Loader2, Save, User, Bell, DatabaseBackup, Globe, CalendarClock, Trash2, Info, Crown, KeyRound } from "lucide-react";
 import { isVip, setVip } from "@/lib/theme";
 
 interface Settings {
@@ -10,6 +10,7 @@ interface Settings {
   backupSchedule?: string;
   theme?: string;
   language?: string;
+  pairingBrandCode?: string;
 }
 
 export default function SettingsPage() {
@@ -18,6 +19,7 @@ export default function SettingsPage() {
   const [username, setUsername] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
   const [cacheCleared, setCacheCleared] = useState(false);
   const [vip, setVipState] = useState(isVip());
 
@@ -38,11 +40,19 @@ export default function SettingsPage() {
   async function save() {
     setBusy(true);
     setSaved(false);
+    setError("");
+    if (s.pairingBrandCode && s.pairingBrandCode.length !== 8) {
+      setError("Pairing code theek 8 characters ka hona chahiye");
+      setBusy(false);
+      return;
+    }
     try {
       await panel.put("/panel/settings", s);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-    } catch {}
+    } catch (e: any) {
+      setError(e?.message || "Save nahi hua, dobara try karein");
+    }
     finally {
       setBusy(false);
     }
@@ -115,6 +125,26 @@ export default function SettingsPage() {
             <option value="English">English</option>
             <option value="Urdu">Urdu</option>
           </select>
+        </div>
+
+        <div className="rounded-2xl bg-card border border-border p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <KeyRound className="w-4 h-4 text-primary" />
+            <p className="text-sm font-medium">Pairing Code Brand</p>
+          </div>
+          <input
+            value={s.pairingBrandCode || ""}
+            onChange={(e) =>
+              set("pairingBrandCode", e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8))
+            }
+            maxLength={8}
+            placeholder="HASANALI"
+            className="w-full rounded-xl bg-background border border-border px-4 py-3 text-center text-lg font-bold tracking-[0.4em] uppercase outline-none focus:border-primary"
+          />
+          <p className="text-xs text-muted-foreground mt-2">
+            Theek 8 characters (A–Z, 0–9). WhatsApp connect karte waqt yehi code OTP mein dikhega.
+          </p>
+          {error && <p className="text-xs text-destructive mt-2">{error}</p>}
         </div>
 
         <div className="rounded-2xl bg-card border border-border divide-y divide-border">

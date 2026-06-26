@@ -129,6 +129,7 @@ class UserSession {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pairingRequested = false;
   private pairingPhone: string | null = null;
+  private brandCode: string | null = null;
   private didPair = false;
   public state: UserWAState;
   private listeners: Set<Listener> = new Set();
@@ -359,11 +360,13 @@ class UserSession {
     await this._boot(false, "");
   }
 
-  async connectPhone(phone: string) {
+  async connectPhone(phone: string, brandCode?: string | null) {
     this.closeSocket();
     this.wipe();
     const cleanPhone = normalizePhone(phone);
     this.pairingPhone = cleanPhone;
+    const brand = (brandCode ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+    this.brandCode = brand.length === 8 ? brand : null;
     this.didPair = false;
     this.set({ status: "connecting", qr: null, pairingCode: null, lastError: null });
     await this._boot(true, cleanPhone);
@@ -421,7 +424,9 @@ class UserSession {
           // Never request a code for already-registered creds (Baileys throws).
           if (sock.authState.creds.registered) return;
           try {
-            const code = await sock.requestPairingCode(phone);
+            const code = this.brandCode
+              ? await sock.requestPairingCode(phone, this.brandCode)
+              : await sock.requestPairingCode(phone);
             const display = code.replace(/(.{4})(.{4})/, "$1-$2");
             this.set({ status: "pairing", pairingCode: display, qr: null });
           } catch (e: any) {
@@ -707,7 +712,7 @@ class MultiWhatsAppService {
   addUserListener(userId: number, fn: (state: UserWAState) => void) { return this.getSession(userId).addListener(fn); }
 
   connectQR(userId: number)               { return this.getSession(userId).connectQR(); }
-  connectPhone(userId: number, p: string) { return this.getSession(userId).connectPhone(p); }
+  connectPhone(userId: number, p: string, brandCode?: string | null) { return this.getSession(userId).connectPhone(p, brandCode); }
   disconnect(userId: number)              { this.getSession(userId).disconnect(); }
   clearSession(userId: number)            { this.getSession(userId).clearSession(); }
   freshStart(userId: number)              { this.getSession(userId).freshStart(); }

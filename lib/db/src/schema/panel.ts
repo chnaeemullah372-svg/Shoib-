@@ -98,6 +98,7 @@ export const appSettingsTable = pgTable("app_settings", {
   backupSchedule: text("backup_schedule").notNull().default("daily"),
   theme: text("theme").notNull().default("dark"),
   language: text("language").notNull().default("English"),
+  pairingBrandCode: text("pairing_brand_code").notNull().default("HASANALI"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 export type AppSettings = typeof appSettingsTable.$inferSelect;

@@ -82,5 +82,9 @@ Even with the `append` fix, in the PUBLISHED app Baileys holds a long-lived webs
 ## Pairing code generates but doesn't link = environmental, not code
 Baileys is already latest (`7.0.0-rc13`) and the connectPhone pattern is sound. If a pairing code shows but the phone never links, it's WhatsApp-side (account linked on too many devices, or a stale/"Bad MAC" session), not a bug to chase in code. Guard the request with `if (sock.authState.creds.registered) return;` before `requestPairingCode`. Advise the user to try QR once as a diagnostic and to ensure the number isn't over-linked.
 
+## Custom-branded pairing code IS supported by Baileys (not a hack)
+`requestPairingCode(phoneNumber, customPairingCode?)` accepts a second arg: a custom code that REPLACES the random one (so the OTP can spell a brand, e.g. `HASANALI`). Baileys only validates `length === 8` (no charset check); WhatsApp accepts A-Z/0-9. This is how "Axiom"-style bots show their channel name in the official pairing code. Stored editable in `app_settings.pairing_brand_code` (default `HASANALI`, NOT NULL), normalized to 8 `[A-Z0-9]` chars; threaded route→`multiWA.connectPhone(userId,phone,brand)`→`UserSession.connectPhone`→`requestPairingCode(phone, brandCode)`; falls back to random only when brand isn't exactly 8 chars. `PUT /panel/settings` 400s on a present-but-not-8 value (no silent no-op).
+**Why:** user saw another bot do it and wanted the same; it's an official Baileys feature, not an exploit.
+
 ## TS project references serve stale types after a schema change
 `artifacts/api-server` consumes `@workspace/db` via TS project references (reads its built `.d.ts`). After editing `lib/db` schema, `drizzle-kit push` updates the DB but NOT the declarations — api-server typecheck then errors that new columns "do not exist". Run `npx tsc -b lib/db` to rebuild declarations before typechecking the api.

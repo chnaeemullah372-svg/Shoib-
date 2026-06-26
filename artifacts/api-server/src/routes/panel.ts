@@ -141,7 +141,8 @@ router.post("/panel/wa/connect-phone", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Phone number required" });
     return;
   }
-  await multiWA.connectPhone(PANEL_USER_ID, phone);
+  const settings = await getSettings();
+  await multiWA.connectPhone(PANEL_USER_ID, phone, settings.pairingBrandCode);
   await logEvent(`WhatsApp pairing-code connect requested for ${phone}`, "info", "whatsapp");
   res.json(multiWA.getState(PANEL_USER_ID));
 });
@@ -275,6 +276,15 @@ router.put("/panel/settings", async (req, res): Promise<void> => {
   if (!(await requirePanelUser(req, res))) return;
   await getSettings();
   const b = req.body ?? {};
+  let pairingBrandCode: string | undefined;
+  if (b.pairingBrandCode !== undefined && b.pairingBrandCode !== null) {
+    const brandRaw = String(b.pairingBrandCode).toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (brandRaw.length !== 8) {
+      res.status(400).json({ error: "Pairing code theek 8 characters (A-Z, 0-9) ka hona chahiye" });
+      return;
+    }
+    pairingBrandCode = brandRaw;
+  }
   const [updated] = await db
     .update(appSettingsTable)
     .set({
@@ -283,6 +293,7 @@ router.put("/panel/settings", async (req, res): Promise<void> => {
       backupSchedule: b.backupSchedule ?? undefined,
       theme: b.theme ?? undefined,
       language: b.language ?? undefined,
+      pairingBrandCode: pairingBrandCode ?? undefined,
       updatedAt: new Date(),
     })
     .where(eq(appSettingsTable.id, 1))
