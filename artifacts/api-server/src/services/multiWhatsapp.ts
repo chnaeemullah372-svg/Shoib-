@@ -494,7 +494,12 @@ class UserSession {
 
     // Capture ALL messages (incoming + outgoing) for WhatsApp Web inbox
     sock.ev.on("messages.upsert", async (m: BaileysEventMap["messages.upsert"]) => {
-      if (m.type !== "notify") return;
+      // "notify" = a brand-new live message arriving at this device.
+      // "append" = a message added to a chat from ELSEWHERE — most importantly the
+      //   messages you send from your OWN phone (WhatsApp→WhatsApp). Without
+      //   handling it, the panel never shows phone-sent outgoing messages live.
+      if (m.type !== "notify" && m.type !== "append") return;
+      const isLive = m.type === "notify";
       for (const msg of m.messages) {
         const parsed = this.parseWAMessage(msg);
         if (!parsed) continue;
@@ -502,7 +507,8 @@ class UserSession {
         // Show the message IMMEDIATELY (text or media placeholder) so the inbox
         // updates in real time. The actual media bytes are downloaded in the
         // background below and patched in via a second upsert (COALESCE-backfill).
-        this.upsertMsg(jid, chatMsg, parsed.display);
+        // append → treat like history (no unread bump); notify → live (counts unread).
+        this.upsertMsg(jid, chatMsg, parsed.display, !isLive);
         if (chatMsg.mediaKind && !chatMsg.media) {
           downloadMediaBase64(msg, sock)
             .then((b64) => {
@@ -514,7 +520,7 @@ class UserSession {
             })
             .catch(() => {});
         }
-        if (!chatMsg.fromMe) {
+        if (!chatMsg.fromMe && isLive) {
           // Remember the key so /read endpoint can send blue-tick when admin reads
           this.incomingKeys.set(chatMsg.id, { remoteJid: jid, id: chatMsg.id, fromMe: false });
           // Do NOT call readMessages here — that gives immediate blue-tick

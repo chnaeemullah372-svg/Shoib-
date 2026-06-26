@@ -360,7 +360,7 @@ function Conversation({ jid, chat, onBack }: { jid: string; chat?: WAChat; onBac
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col max-w-md mx-auto">
+    <div className="h-[100dvh] bg-background flex flex-col max-w-md mx-auto">
       {/* Conversation header — sidebar hidden, back button shown */}
       <header className="flex items-center gap-2 px-3 h-14 bg-wa-header text-white shrink-0 shadow-md z-10">
         <button onClick={onBack} className="p-1">
