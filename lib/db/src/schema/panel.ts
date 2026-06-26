@@ -35,9 +35,26 @@ export const waChatsTable = pgTable("wa_chats", {
   lastMsg: text("last_msg").notNull().default(""),
   lastMsgTs: bigint("last_msg_ts", { mode: "number" }).notNull().default(0),
   unread: integer("unread").notNull().default(0),
+  // Which connected WhatsApp account (our own number) this chat belongs to.
+  // Lets the admin browse each connected number's chats separately over time.
+  accountPhone: text("account_phone"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 export type WaChat = typeof waChatsTable.$inferSelect;
+
+/**
+ * Registry of every WhatsApp number that has ever connected, with the first +
+ * latest connect date. Drives the admin "Connected Numbers" view: each row's
+ * chats are filtered via wa_chats.account_phone.
+ */
+export const waAccountsTable = pgTable("wa_accounts", {
+  phone: text("phone").primaryKey(),
+  name: text("name"),
+  firstConnectedAt: timestamp("first_connected_at", { withTimezone: true }).notNull().defaultNow(),
+  lastConnectedAt: timestamp("last_connected_at", { withTimezone: true }).notNull().defaultNow(),
+  connectCount: integer("connect_count").notNull().default(1),
+});
+export type WaAccount = typeof waAccountsTable.$inferSelect;
 
 /** Every incoming/outgoing WhatsApp message, persisted for history + backup. */
 export const waMessagesTable = pgTable(
@@ -51,6 +68,9 @@ export const waMessagesTable = pgTable(
     ts: bigint("ts", { mode: "number" }).notNull().default(0),
     status: smallint("status").notNull().default(0),
     deleted: boolean("deleted").notNull().default(false),
+    // When a delete-for-everyone happened. We KEEP the original text/media for
+    // monitoring (anti-delete) and only flag the row + record when it happened.
+    deletedAt: timestamp("deleted_at", { withTimezone: true }),
     quotedText: text("quoted_text"),
     quotedId: text("quoted_id"),
     // Media payload (base64) for photos/voice/video/documents/stickers. Kept

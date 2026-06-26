@@ -84,6 +84,16 @@ export interface WAChat {
   lastMsgTs: number;
   unread: number;
   updatedAt: string;
+  accountPhone: string | null;
+}
+
+export interface WAAccount {
+  phone: string;
+  name: string | null;
+  firstConnectedAt: string;
+  lastConnectedAt: string;
+  connectCount: number;
+  chatCount: number;
 }
 
 export interface WAMessage {
@@ -95,6 +105,7 @@ export interface WAMessage {
   ts: number;
   status: number;
   deleted: boolean;
+  deletedAt: string | null;
   quotedText: string | null;
   quotedId: string | null;
   mediaKind: string | null; // image | video | audio | sticker | document

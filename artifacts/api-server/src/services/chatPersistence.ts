@@ -1,9 +1,10 @@
-import { eq, sql, desc, asc } from "drizzle-orm";
+import { eq, sql, desc, asc, count } from "drizzle-orm";
 import { createHash } from "crypto";
 import {
   db,
   waChatsTable,
   waMessagesTable,
+  waAccountsTable,
   appLogsTable,
   adminUsersTable,
   type WaChat,
@@ -17,6 +18,12 @@ import { multiWA, type HydrateChat, type WAChatMsg } from "./multiWhatsapp";
 export const PANEL_USER_ID = 1;
 
 let started = false;
+
+/** ANTI-DELETE timing safety: ids seen as deleted-for-everyone BEFORE their
+ *  original message was persisted. Any later-arriving original with one of these
+ *  ids is written as already-deleted, so a revoke can never "lose" to an
+ *  out-of-order original (e.g. during history sync). */
+const pendingDeletes = new Set<string>();
 
 /** Append a line to the application log table (best-effort, never throws). */
 export async function logEvent(message: string, level = "info", source = "system") {
@@ -33,6 +40,11 @@ export async function logEvent(message: string, level = "info", source = "system
  *  chat's last-message preview when this message is actually newer. */
 async function persistMessage(jid: string, phone: string, msg: WAChatMsg, history = false) {
   try {
+    // The WhatsApp number that is currently linked — every chat we capture is
+    // tagged with it so the admin can browse each connected number separately.
+    const accountPhone = multiWA.getSessionInfo(PANEL_USER_ID)?.phoneNumber ?? null;
+    // If a revoke for this id arrived before the original, honour it now.
+    const isDeleted = (msg.deleted ?? false) || pendingDeletes.has(msg.id);
     await db
       .insert(waMessagesTable)
       .values({
@@ -42,7 +54,8 @@ async function persistMessage(jid: string, phone: string, msg: WAChatMsg, histor
         fromMe: msg.fromMe,
         ts: msg.ts,
         status: msg.status,
-        deleted: msg.deleted ?? false,
+        deleted: isDeleted,
+        deletedAt: isDeleted ? new Date() : null,
         quotedText: msg.quotedText,
         quotedId: msg.quotedId,
         media: msg.media,
@@ -52,11 +65,14 @@ async function persistMessage(jid: string, phone: string, msg: WAChatMsg, histor
       })
       .onConflictDoUpdate({
         target: waMessagesTable.waMessageId,
-        // Refresh the stored text (e.g. an old row saved as "Media" before the
-        // envelope-unwrap fix) but never clobber a deleted-for-everyone marker.
-        // Backfill media too when a re-seen row finally downloaded its payload.
+        // ANTI-DELETE: once a message is flagged deleted we KEEP the original
+        // text + media (don't overwrite). Otherwise refresh the text (e.g. an
+        // old row saved as "Media" before the envelope-unwrap fix) and backfill
+        // media when a re-seen row finally downloaded its payload.
         set: {
-          text: sql`CASE WHEN ${waMessagesTable.deleted} THEN ${waMessagesTable.text} ELSE ${msg.text} END`,
+          text: sql`CASE WHEN ${waMessagesTable.deleted} OR ${isDeleted} THEN ${waMessagesTable.text} ELSE ${msg.text} END`,
+          deleted: sql`${waMessagesTable.deleted} OR ${isDeleted}`,
+          deletedAt: sql`COALESCE(${waMessagesTable.deletedAt}, ${isDeleted ? new Date() : null})`,
           quotedText: msg.quotedText,
           quotedId: msg.quotedId,
           media: sql`COALESCE(${waMessagesTable.media}, ${msg.media ?? null})`,
@@ -74,6 +90,7 @@ async function persistMessage(jid: string, phone: string, msg: WAChatMsg, histor
         lastMsg: msg.text,
         lastMsgTs: msg.ts,
         unread: 0,
+        accountPhone,
       })
       .onConflictDoUpdate({
         target: waChatsTable.jid,
@@ -82,6 +99,8 @@ async function persistMessage(jid: string, phone: string, msg: WAChatMsg, histor
           // arrive out of order).
           lastMsg: sql`CASE WHEN ${msg.ts} >= ${waChatsTable.lastMsgTs} THEN ${msg.text} ELSE ${waChatsTable.lastMsg} END`,
           lastMsgTs: sql`GREATEST(${waChatsTable.lastMsgTs}, ${msg.ts})`,
+          // Keep the first owning account; only fill it in if it was unknown.
+          accountPhone: sql`COALESCE(${waChatsTable.accountPhone}, ${accountPhone})`,
           unread:
             history || msg.fromMe
               ? sql`${waChatsTable.unread}`
@@ -92,6 +111,41 @@ async function persistMessage(jid: string, phone: string, msg: WAChatMsg, histor
   } catch (err) {
     console.error("[persist] failed to persist message:", err);
   }
+}
+
+/**
+ * Record (or refresh) a connected WhatsApp number in the account registry.
+ * Called whenever a session reaches the "connected" state with a phone number.
+ */
+export async function recordAccount(phone: string) {
+  try {
+    await db
+      .insert(waAccountsTable)
+      .values({ phone })
+      .onConflictDoUpdate({
+        target: waAccountsTable.phone,
+        set: {
+          lastConnectedAt: new Date(),
+          connectCount: sql`${waAccountsTable.connectCount} + 1`,
+        },
+      });
+  } catch (err) {
+    console.error("[persist] failed to record account:", err);
+  }
+}
+
+/** All connected numbers + how many chats belong to each. */
+export async function getAccounts() {
+  const accounts = await db
+    .select()
+    .from(waAccountsTable)
+    .orderBy(desc(waAccountsTable.lastConnectedAt));
+  const counts = await db
+    .select({ accountPhone: waChatsTable.accountPhone, value: count() })
+    .from(waChatsTable)
+    .groupBy(waChatsTable.accountPhone);
+  const byPhone = new Map(counts.map((c) => [c.accountPhone, Number(c.value)]));
+  return accounts.map((a) => ({ ...a, chatCount: byPhone.get(a.phone) ?? 0 }));
 }
 
 /** Update the delivery/read status of a stored message. */
@@ -115,12 +169,17 @@ export async function clearUnread(jid: string) {
   }
 }
 
-/** Mark a stored message as deleted-for-everyone. */
+/** Flag a stored message as deleted-for-everyone WITHOUT losing its content.
+ *  ANTI-DELETE: the original text + media stay on the server for monitoring;
+ *  we only set the flag + the time it was deleted. */
 export async function markDeleted(waMessageId: string) {
+  // Remember it even if the row isn't stored yet, so an out-of-order original
+  // (e.g. arriving later via history sync) is written as already-deleted.
+  pendingDeletes.add(waMessageId);
   try {
     await db
       .update(waMessagesTable)
-      .set({ deleted: true, text: "🚫 This message was deleted" })
+      .set({ deleted: true, deletedAt: new Date() })
       .where(eq(waMessagesTable.waMessageId, waMessageId));
   } catch (err) {
     console.error("[persist] failed to mark deleted:", err);
@@ -169,9 +228,13 @@ export async function loadHistory(): Promise<HydrateChat[]> {
   return result;
 }
 
-/** All chats (for admin overview). */
-export async function getAllChats(): Promise<WaChat[]> {
-  return db.select().from(waChatsTable).orderBy(desc(waChatsTable.lastMsgTs));
+/** All chats (for admin overview), optionally filtered to one connected number. */
+export async function getAllChats(accountPhone?: string): Promise<WaChat[]> {
+  const q = db.select().from(waChatsTable);
+  if (accountPhone) {
+    return q.where(eq(waChatsTable.accountPhone, accountPhone)).orderBy(desc(waChatsTable.lastMsgTs));
+  }
+  return q.orderBy(desc(waChatsTable.lastMsgTs));
 }
 
 /** All messages for a chat (from DB — survives restart). The heavy base64
@@ -188,6 +251,7 @@ export async function getChatMessagesDb(jid: string) {
       ts: waMessagesTable.ts,
       status: waMessagesTable.status,
       deleted: waMessagesTable.deleted,
+      deletedAt: waMessagesTable.deletedAt,
       quotedText: waMessagesTable.quotedText,
       quotedId: waMessagesTable.quotedId,
       mediaMime: waMessagesTable.mediaMime,
@@ -252,6 +316,17 @@ export async function startPersistence() {
   });
   multiWA.addStatusListener((_uid, update) => {
     void persistStatus(update.waMessageId, update.status);
+  });
+  // ANTI-DELETE: when WhatsApp revokes a message (deleted for everyone), flag it
+  // in the DB but keep the original content for monitoring.
+  multiWA.addDeleteListener((_uid, waMessageId) => {
+    void markDeleted(waMessageId);
+  });
+  // Per-account registry: record every number that reaches the connected state.
+  multiWA.addGlobalListener((state) => {
+    if (state.status === "connected" && state.phoneNumber) {
+      void recordAccount(state.phoneNumber);
+    }
   });
 
   try {

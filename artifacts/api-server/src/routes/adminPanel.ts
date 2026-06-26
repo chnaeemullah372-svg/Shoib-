@@ -15,6 +15,7 @@ import { multiWA } from "../services/multiWhatsapp.js";
 import {
   PANEL_USER_ID,
   getAllChats,
+  getAccounts,
   getChatMessagesDb,
   getMediaById,
   logEvent,
@@ -136,9 +137,15 @@ router.get("/admin-panel/wa/status", async (req, res): Promise<void> => {
   res.json(multiWA.getSessionInfo(PANEL_USER_ID));
 });
 
+router.get("/admin-panel/accounts", async (req, res): Promise<void> => {
+  if (!(await requireAdmin(req, res))) return;
+  res.json(await getAccounts());
+});
+
 router.get("/admin-panel/chats", async (req, res): Promise<void> => {
   if (!(await requireAdmin(req, res))) return;
-  res.json(await getAllChats());
+  const account = typeof req.query.account === "string" ? req.query.account : undefined;
+  res.json(await getAllChats(account));
 });
 
 router.get("/admin-panel/chats/:jid/messages", async (req, res): Promise<void> => {

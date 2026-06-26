@@ -117,6 +117,9 @@ type StatusListener = (userId: number, update: StatusUpdate) => void;
  * `history` is true when the message comes from a WhatsApp history sync (so the
  * persister knows not to bump unread counters for old messages). */
 type PersistListener = (userId: number, jid: string, phone: string, msg: WAChatMsg, history?: boolean) => void;
+/** Fired when a message is deleted-for-everyone, so the DB can flag it while
+ *  keeping the original content (anti-delete monitoring). */
+type DeleteListener = (userId: number, waMessageId: string) => void;
 
 export interface HydrateChat {
   meta: WAChat;
@@ -136,6 +139,7 @@ class UserSession {
   private msgListeners: Set<MsgListener> = new Set();
   private statusListeners: Set<StatusListener> = new Set();
   private persistListeners: Set<PersistListener> = new Set();
+  private deleteListeners: Set<DeleteListener> = new Set();
   private chatStore = new Map<string, { meta: WAChat; msgs: WAChatMsg[] }>();
   /** Map of waMessageId → key, for sendReceipt round-trips. */
   private incomingKeys = new Map<string, { remoteJid: string; id: string; participant?: string; fromMe: boolean }>();
@@ -143,9 +147,13 @@ class UserSession {
   addMsgListener(fn: MsgListener) { this.msgListeners.add(fn); return () => this.msgListeners.delete(fn); }
   addStatusListener(fn: StatusListener) { this.statusListeners.add(fn); return () => this.statusListeners.delete(fn); }
   addPersistListener(fn: PersistListener) { this.persistListeners.add(fn); return () => this.persistListeners.delete(fn); }
+  addDeleteListener(fn: DeleteListener) { this.deleteListeners.add(fn); return () => this.deleteListeners.delete(fn); }
   private notifyPersist(jid: string, msg: WAChatMsg, history = false) {
     const phone = jid.split("@")[0];
     for (const fn of this.persistListeners) { try { fn(this.userId, jid, phone, msg, history); } catch {} }
+  }
+  private notifyDelete(waMessageId: string) {
+    for (const fn of this.deleteListeners) { try { fn(this.userId, waMessageId); } catch {} }
   }
 
   /** Load chat history from DB into the in-memory store (called on startup). */
@@ -213,8 +221,10 @@ class UserSession {
     const entry = this.chatStore.get(jid);
     if (entry) {
       const m = entry.msgs.find(x => x.id === msgId);
-      if (m) { m.deleted = true; m.text = "🚫 This message was deleted"; }
+      // ANTI-DELETE: flag it but keep the original text/media for monitoring.
+      if (m) m.deleted = true;
     }
+    this.notifyDelete(msgId);
   }
 
   private upsertMsg(jid: string, m: WAChatMsg, display: string, history = false) {
@@ -506,6 +516,21 @@ class UserSession {
       if (m.type !== "notify" && m.type !== "append") return;
       const isLive = m.type === "notify";
       for (const msg of m.messages) {
+        // ANTI-DELETE: a "delete for everyone" arrives as a protocolMessage
+        // REVOKE (type 0). It can be wrapped (deviceSent / ephemeral), so unwrap
+        // first. Flag the referenced message but KEEP its content, and never
+        // store the revoke envelope itself as a junk message.
+        const proto = this.unwrapMessage((msg.message as any))?.protocolMessage
+          ?? (msg.message as any)?.protocolMessage;
+        if (proto && proto.type === 0 && proto.key?.id) {
+          const delId: string = proto.key.id;
+          const delJid: string = msg.key?.remoteJid ?? proto.key.remoteJid ?? "";
+          const entry = this.chatStore.get(delJid);
+          const target = entry?.msgs.find((x) => x.id === delId);
+          if (target) target.deleted = true;
+          this.notifyDelete(delId);
+          continue;
+        }
         const parsed = this.parseWAMessage(msg);
         if (!parsed) continue;
         const { jid, m: chatMsg } = parsed;
@@ -515,7 +540,9 @@ class UserSession {
         // append → treat like history (no unread bump); notify → live (counts unread).
         this.upsertMsg(jid, chatMsg, parsed.display, !isLive);
         if (chatMsg.mediaKind && !chatMsg.media) {
-          downloadMediaBase64(msg, sock)
+          // Pass the UNWRAPPED message so view-once / ephemeral media downloads
+          // correctly (Baileys can't find media inside the envelope otherwise).
+          downloadMediaBase64({ key: msg.key, message: parsed.raw }, sock)
             .then((b64) => {
               if (b64) {
                 // `history=true` → this is a media backfill of an already-counted
@@ -557,7 +584,8 @@ class UserSession {
         if (!parsed) continue;
         const { jid, m: chatMsg } = parsed;
         if (chatMsg.mediaKind && !chatMsg.media) {
-          const b64 = await downloadMediaBase64(msg, sock);
+          // Unwrapped message → view-once / ephemeral media downloads correctly.
+          const b64 = await downloadMediaBase64({ key: msg.key, message: parsed.raw }, sock);
           if (b64) chatMsg.media = b64;
         }
         this.upsertMsg(jid, chatMsg, parsed.display, true);
@@ -671,6 +699,7 @@ class MultiWhatsAppService {
   private globalMsgListeners: Set<MsgListener> = new Set();
   private globalStatusListeners: Set<StatusListener> = new Set();
   private globalPersistListeners: Set<PersistListener> = new Set();
+  private globalDeleteListeners: Set<DeleteListener> = new Set();
 
   addGlobalListener(fn: (state: UserWAState) => void) {
     this.globalListeners.add(fn);
@@ -681,6 +710,12 @@ class MultiWhatsAppService {
   addPersistListener(fn: PersistListener) {
     this.globalPersistListeners.add(fn);
     return () => this.globalPersistListeners.delete(fn);
+  }
+
+  /** Subscribe to delete-for-everyone events across all sessions (anti-delete). */
+  addDeleteListener(fn: DeleteListener) {
+    this.globalDeleteListeners.add(fn);
+    return () => this.globalDeleteListeners.delete(fn);
   }
 
   /** Load DB chat history into a session's in-memory store (call before connect). */
@@ -700,6 +735,9 @@ class MultiWhatsAppService {
       });
       sess.addPersistListener((uid, jid, phone, msg, history) => {
         for (const fn of this.globalPersistListeners) { try { fn(uid, jid, phone, msg, history); } catch {} }
+      });
+      sess.addDeleteListener((uid, waMessageId) => {
+        for (const fn of this.globalDeleteListeners) { try { fn(uid, waMessageId); } catch {} }
       });
       this.sessions.set(userId, sess);
     }

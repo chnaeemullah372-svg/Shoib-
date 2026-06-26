@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { useLocation } from "wouter";
-import { admin, adminAuth, fmtClock, fmtBytes, fmtTime, type AppLog, type WAChat, type WAMessage } from "@/lib/panelApi";
+import { admin, adminAuth, fmtClock, fmtBytes, fmtTime, type AppLog, type WAChat, type WAMessage, type WAAccount } from "@/lib/panelApi";
 import {
   ShieldCheck, Users, MessageSquare, ArrowDownLeft, ArrowUpRight, LogOut,
   Download, RefreshCw, Wrench, Trash2, CheckCircle2, XCircle, Eye, EyeOff,
   Loader2, Activity, Power, LayoutDashboard, MessagesSquare, HardDrive,
   Database, ScrollText, Menu, X, Circle, Search, ChevronLeft, Crown, KeyRound,
+  Smartphone, CalendarClock,
 } from "lucide-react";
 import { isVip, setVip } from "@/lib/theme";
 
@@ -51,11 +52,12 @@ interface PanelUser {
   approvedAt?: string | null;
 }
 
-type View = "overview" | "users" | "chats" | "live" | "storage" | "logs" | "tools";
+type View = "overview" | "users" | "accounts" | "chats" | "live" | "storage" | "logs" | "tools";
 
 const NAV: { key: View; label: string; icon: typeof LayoutDashboard }[] = [
   { key: "overview", label: "Dashboard", icon: LayoutDashboard },
   { key: "users", label: "User Account", icon: Users },
+  { key: "accounts", label: "Connected Numbers", icon: Smartphone },
   { key: "chats", label: "All Chats", icon: MessagesSquare },
   { key: "live", label: "Live Messages", icon: Activity },
   { key: "storage", label: "Storage & Backups", icon: HardDrive },
@@ -72,6 +74,8 @@ export default function AdminDashboard() {
   const [messages, setMessages] = useState<(WAMessage & { _chat?: string })[]>([]);
   const [logs, setLogs] = useState<AppLog[]>([]);
   const [chats, setChats] = useState<WAChat[]>([]);
+  const [accounts, setAccounts] = useState<WAAccount[]>([]);
+  const [accountFilter, setAccountFilter] = useState<string | null>(null);
   const [activeChat, setActiveChat] = useState<WAChat | null>(null);
   const [chatMessages, setChatMessages] = useState<WAMessage[]>([]);
   const [showPw, setShowPw] = useState(false);
@@ -85,16 +89,18 @@ export default function AdminDashboard() {
 
   const loadAll = useCallback(async () => {
     try {
-      const [st, us, lg, ch] = await Promise.all([
+      const [st, us, lg, ch, ac] = await Promise.all([
         admin.get("/admin-panel/stats"),
         admin.get("/admin-panel/user"),
         admin.get("/admin-panel/logs?limit=120"),
         admin.get("/admin-panel/chats"),
+        admin.get("/admin-panel/accounts"),
       ]);
       setStats(st);
       setUser(us);
       setLogs(lg || []);
       setChats(ch || []);
+      setAccounts(ac || []);
       const recent: (WAMessage & { _chat?: string })[] = [];
       for (const c of (ch || []).slice(0, 10)) {
         const msgs: WAMessage[] = await admin.get(`/admin-panel/chats/${encodeURIComponent(c.jid)}/messages`);
@@ -192,10 +198,20 @@ export default function AdminDashboard() {
   const waStatus = stats?.whatsapp.status || "…";
   const waConnected = waStatus === "connected";
   const filteredChats = chats.filter(
-    (c) => !search || (c.name || "").toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search)
+    (c) =>
+      (!accountFilter || c.accountPhone === accountFilter) &&
+      (!search || (c.name || "").toLowerCase().includes(search.toLowerCase()) || c.phone.includes(search))
   );
 
-  function go(v: View) { setView(v); setDrawer(false); setActiveChat(null); }
+  function go(v: View) { setView(v); setDrawer(false); setActiveChat(null); if (v !== "chats") setAccountFilter(null); }
+
+  function openAccount(a: WAAccount) {
+    setAccountFilter(a.phone);
+    setActiveChat(null);
+    setSearch("");
+    setView("chats");
+    setDrawer(false);
+  }
 
   return (
     <div className="min-h-screen bg-background flex">
@@ -351,8 +367,47 @@ export default function AdminDashboard() {
             </div>
           )}
 
+          {view === "accounts" && (
+            <Card title={`Connected Numbers (${accounts.length})`} icon={Smartphone}>
+              <p className="text-xs text-muted-foreground mb-3">
+                Har WhatsApp number jo kabhi connect hua, connect date ke saath. Kisi number par click karein to us account ki saari chats alag se khulengi.
+              </p>
+              {accounts.length === 0 ? (
+                <p className="text-sm text-muted-foreground text-center py-10">Abhi tak koi number connect nahi hua.</p>
+              ) : (
+                <div className="space-y-2">
+                  {accounts.map((a) => (
+                    <button
+                      key={a.phone}
+                      onClick={() => openAccount(a)}
+                      className="w-full text-left p-3 rounded-lg border border-border hover:bg-muted transition flex items-center gap-3"
+                    >
+                      <div className="w-11 h-11 rounded-full bg-primary/15 text-primary flex items-center justify-center shrink-0">
+                        <Smartphone className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold truncate">+{a.phone}</p>
+                        <p className="text-[11px] text-muted-foreground flex items-center gap-1 mt-0.5">
+                          <CalendarClock className="w-3 h-3" /> First connected {fmtTime(new Date(a.firstConnectedAt).getTime())}
+                          {a.connectCount > 1 && <span className="ml-1">· {a.connectCount}× connected</span>}
+                        </p>
+                      </div>
+                      <span className="text-[11px] bg-muted rounded-full px-2 py-0.5 font-medium shrink-0">{a.chatCount} chats</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
+
           {view === "chats" && !activeChat && (
-            <Card title={`All Chats (${chats.length})`} icon={MessagesSquare}>
+            <Card title={accountFilter ? `Chats of +${accountFilter} (${filteredChats.length})` : `All Chats (${chats.length})`} icon={MessagesSquare}>
+              {accountFilter && (
+                <div className="flex items-center justify-between gap-2 rounded-lg bg-primary/10 text-primary px-3 py-2 mb-3 text-xs">
+                  <span className="flex items-center gap-1.5 truncate"><Smartphone className="w-3.5 h-3.5" /> Showing chats for +{accountFilter}</span>
+                  <button onClick={() => setAccountFilter(null)} className="font-semibold underline shrink-0">Show all</button>
+                </div>
+              )}
               <div className="flex items-center gap-2 rounded-lg bg-background border border-border px-3 mb-3">
                 <Search className="w-4 h-4 text-muted-foreground" />
                 <input
@@ -416,16 +471,17 @@ export default function AdminDashboard() {
                   <p className="text-sm text-muted-foreground text-center py-16">No messages in this chat yet.</p>
                 ) : chatMessages.map((m) => (
                   <div key={m.waMessageId} className={`flex ${m.fromMe ? "justify-end" : "justify-start"}`}>
-                    <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${m.fromMe ? "bg-primary/15" : "bg-muted"}`}>
-                      {m.deleted ? (
-                        <p className="break-words whitespace-pre-wrap"><span className="italic text-muted-foreground">deleted</span></p>
-                      ) : m.mediaKind ? (
+                    <div className={`max-w-[80%] rounded-2xl px-3 py-2 text-sm ${m.deleted ? "ring-1 ring-destructive/40 " : ""}${m.fromMe ? "bg-primary/15" : "bg-muted"}`}>
+                      {m.mediaKind ? (
                         <div className="space-y-1">
                           <AdminMedia msg={m} />
                           {!PLACEHOLDER_RE.test(m.text) && <p className="break-words whitespace-pre-wrap">{m.text}</p>}
                         </div>
                       ) : (
                         <p className="break-words whitespace-pre-wrap">{m.text}</p>
+                      )}
+                      {m.deleted && (
+                        <span className="block mt-1 text-[10px] font-semibold text-destructive">🚫 deleted by sender</span>
                       )}
                       <p className="text-[10px] text-muted-foreground mt-1 text-right">{fmtClock(m.ts)}</p>
                     </div>
@@ -532,7 +588,8 @@ function MessageList({ messages }: { messages: (WAMessage & { _chat?: string })[
             <span className="text-[10px] text-muted-foreground">{fmtTime(m.ts)} {fmtClock(m.ts)}</span>
           </div>
           <p className="text-sm text-foreground/90 break-words line-clamp-3">
-            {m.deleted ? <span className="italic text-muted-foreground">deleted</span> : m.text}
+            {m.text}
+            {m.deleted && <span className="ml-1.5 text-[10px] font-semibold text-destructive align-middle">🚫 deleted</span>}
           </p>
         </div>
       ))}
