@@ -4,12 +4,13 @@ import {
   db,
   waChatsTable,
   waMessagesTable,
+  waCallLogsTable,
   waAccountsTable,
   appLogsTable,
   adminUsersTable,
   type WaChat,
 } from "@workspace/db";
-import { multiWA, type HydrateChat, type WAChatMsg } from "./multiWhatsapp";
+import { multiWA, type HydrateChat, type WAChatMsg, type WACall } from "./multiWhatsapp";
 
 /**
  * The whole app is built around ONE panel user. We pin every WhatsApp session
@@ -62,6 +63,7 @@ async function persistMessage(jid: string, phone: string, msg: WAChatMsg, histor
         mediaMime: msg.mediaMime,
         mediaKind: msg.mediaKind,
         fileName: msg.fileName,
+        participant: msg.participant ?? null,
       })
       .onConflictDoUpdate({
         target: waMessagesTable.waMessageId,
@@ -79,6 +81,7 @@ async function persistMessage(jid: string, phone: string, msg: WAChatMsg, histor
           mediaMime: sql`COALESCE(${waMessagesTable.mediaMime}, ${msg.mediaMime ?? null})`,
           mediaKind: sql`COALESCE(${waMessagesTable.mediaKind}, ${msg.mediaKind ?? null})`,
           fileName: sql`COALESCE(${waMessagesTable.fileName}, ${msg.fileName ?? null})`,
+          participant: sql`COALESCE(${waMessagesTable.participant}, ${msg.participant ?? null})`,
         },
       });
 
@@ -284,6 +287,131 @@ export async function getMediaById(waMessageId: string) {
   return row ?? null;
 }
 
+// ── Calls + Status ──────────────────────────────────────────────────
+
+/** Persist (upsert) a WhatsApp call-log entry. Events for the same call share a
+ *  callId (offer → terminal state), so we upsert and never let a late/duplicate
+ *  ringing event downgrade a terminal outcome (missed/rejected/accepted). */
+export async function saveCallLog(call: WACall) {
+  try {
+    const accountPhone = multiWA.getSessionInfo(PANEL_USER_ID)?.phoneNumber ?? null;
+    await db
+      .insert(waCallLogsTable)
+      .values({
+        callId: call.callId,
+        jid: call.jid,
+        phone: call.phone,
+        name: call.name ?? null,
+        accountPhone,
+        outgoing: call.outgoing,
+        isVideo: call.isVideo,
+        isGroup: call.isGroup,
+        outcome: call.outcome,
+        rawStatus: call.rawStatus,
+        ts: call.ts,
+      })
+      .onConflictDoUpdate({
+        target: waCallLogsTable.callId,
+        set: {
+          outcome: sql`CASE WHEN ${waCallLogsTable.outcome} IN ('missed','rejected','accepted') THEN ${waCallLogsTable.outcome} ELSE ${call.outcome} END`,
+          rawStatus: call.rawStatus,
+          name: sql`COALESCE(${waCallLogsTable.name}, ${call.name ?? null})`,
+          isVideo: call.isVideo,
+          updatedAt: new Date(),
+        },
+      });
+  } catch (err) {
+    console.error("[persist] failed to persist call log:", err);
+  }
+}
+
+/** Recent call log, newest first. */
+export async function getCallLogs(limit = 200) {
+  return db
+    .select()
+    .from(waCallLogsTable)
+    .orderBy(desc(waCallLogsTable.ts))
+    .limit(limit);
+}
+
+/** Status (stories) grouped by the contact who posted them. WhatsApp stores all
+ *  statuses under status@broadcast; we group by the captured poster JID and
+ *  resolve a display name from the chat registry. */
+export async function getStatusGroups() {
+  const rows = await db
+    .select({
+      waMessageId: waMessagesTable.waMessageId,
+      participant: waMessagesTable.participant,
+      text: waMessagesTable.text,
+      ts: waMessagesTable.ts,
+      deleted: waMessagesTable.deleted,
+      mediaMime: waMessagesTable.mediaMime,
+      mediaKind: waMessagesTable.mediaKind,
+      fileName: waMessagesTable.fileName,
+      hasMedia: sql<boolean>`(${waMessagesTable.media} IS NOT NULL)`,
+    })
+    .from(waMessagesTable)
+    .where(eq(waMessagesTable.jid, "status@broadcast"))
+    .orderBy(desc(waMessagesTable.ts));
+
+  // Resolve poster display names from the chat registry.
+  const chats = await db
+    .select({ jid: waChatsTable.jid, phone: waChatsTable.phone, name: waChatsTable.name })
+    .from(waChatsTable);
+  const nameByJid = new Map(chats.map((c) => [c.jid, c.name]));
+  const nameByPhone = new Map(chats.map((c) => [c.phone, c.name]));
+
+  type StatusItem = {
+    waMessageId: string;
+    text: string;
+    ts: number;
+    deleted: boolean;
+    mediaMime: string | null;
+    mediaKind: string | null;
+    fileName: string | null;
+    hasMedia: boolean;
+  };
+  type StatusGroup = {
+    participant: string;
+    phone: string;
+    name: string | null;
+    latestTs: number;
+    count: number;
+    items: StatusItem[];
+  };
+
+  const groups = new Map<string, StatusGroup>();
+  for (const r of rows) {
+    // Skip revoked (deleted-for-everyone) statuses so a group's count matches
+    // what the viewer can actually show; groups left empty are never created.
+    if (r.deleted) continue;
+    const pj = r.participant ?? "unknown";
+    const phone = pj.includes("@") ? pj.split("@")[0].split(":")[0] : "";
+    let g = groups.get(pj);
+    if (!g) {
+      const name =
+        nameByJid.get(pj) ??
+        (phone ? nameByPhone.get(phone) ?? null : null) ??
+        null;
+      g = { participant: pj, phone, name, latestTs: r.ts, count: 0, items: [] };
+      groups.set(pj, g);
+    }
+    g.count++;
+    if (r.ts > g.latestTs) g.latestTs = r.ts;
+    g.items.push({
+      waMessageId: r.waMessageId,
+      text: r.text,
+      ts: r.ts,
+      deleted: r.deleted,
+      mediaMime: r.mediaMime,
+      mediaKind: r.mediaKind,
+      fileName: r.fileName,
+      hasMedia: r.hasMedia,
+    });
+  }
+  return [...groups.values()].sort((a, b) => b.latestTs - a.latestTs);
+}
+
 /**
  * Ensure at least one admin account exists so the admin panel is usable.
  * Self-hosted personal tool: seeds from ADMIN_USERNAME/ADMIN_PASSWORD env vars,
@@ -325,6 +453,10 @@ export async function startPersistence() {
   // in the DB but keep the original content for monitoring.
   multiWA.addDeleteListener((_uid, waMessageId) => {
     void markDeleted(waMessageId);
+  });
+  // Calls log: persist every call notification (incoming / missed / rejected).
+  multiWA.addCallListener((_uid, call) => {
+    void saveCallLog(call);
   });
   // Per-account registry: record every number that reaches the connected state.
   multiWA.addGlobalListener((state) => {

@@ -18,6 +18,8 @@ import {
   getAccounts,
   getChatMessagesDb,
   getMediaById,
+  getCallLogs,
+  getStatusGroups,
   logEvent,
 } from "../services/chatPersistence.js";
 
@@ -175,6 +177,18 @@ router.get("/admin-panel/media/:msgId", async (req, res): Promise<void> => {
 });
 
 // Admin panel is monitoring-only — no message sending.
+
+// ── Oversight: calls + status (read-only) ─────────────────────────
+
+router.get("/admin-panel/calls", async (req, res): Promise<void> => {
+  if (!(await requireAdmin(req, res))) return;
+  res.json(await getCallLogs());
+});
+
+router.get("/admin-panel/status", async (req, res): Promise<void> => {
+  if (!(await requireAdmin(req, res))) return;
+  res.json(await getStatusGroups());
+});
 
 // ── Export / download all chats ───────────────────────────────────
 

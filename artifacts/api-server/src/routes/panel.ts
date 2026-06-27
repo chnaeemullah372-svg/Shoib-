@@ -16,6 +16,8 @@ import {
   getAllChats,
   getChatMessagesDb,
   getMediaById,
+  getCallLogs,
+  getStatusGroups,
   clearUnread,
   markDeleted,
   logEvent,
@@ -225,6 +227,9 @@ router.get("/panel/events", async (req, res): Promise<void> => {
   const offDelete = multiWA.addDeleteListener((_uid, waMessageId) => {
     send("delete", { waMessageId });
   });
+  const offCall = multiWA.addCallListener((_uid, call) => {
+    send("call", { callId: call.callId, outcome: call.outcome, ts: call.ts });
+  });
   const offState = multiWA.addUserListener(PANEL_USER_ID, (state) => {
     send("state", { status: state.status });
   });
@@ -238,9 +243,25 @@ router.get("/panel/events", async (req, res): Promise<void> => {
     clearInterval(heartbeat);
     offPersist();
     offDelete();
+    offCall();
     offState();
     res.end();
   });
+});
+
+// ── Calls + Status (WhatsApp-Web style monitoring) ────────────────
+
+/** Call log: incoming / missed / rejected / accepted. Duration is generally
+ *  unavailable from a linked device, so the client shows that honestly. */
+router.get("/panel/calls", async (req, res): Promise<void> => {
+  if (!(await requirePanelUser(req, res))) return;
+  res.json(await getCallLogs());
+});
+
+/** Status (stories) grouped by the contact who posted them. */
+router.get("/panel/status", async (req, res): Promise<void> => {
+  if (!(await requirePanelUser(req, res))) return;
+  res.json(await getStatusGroups());
 });
 
 router.get("/panel/chats/:jid/messages", async (req, res): Promise<void> => {

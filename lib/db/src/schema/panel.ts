@@ -79,6 +79,10 @@ export const waMessagesTable = pgTable(
     mediaMime: text("media_mime"),
     mediaKind: text("media_kind"), // image | video | audio | sticker | document
     fileName: text("file_name"),
+    // For status@broadcast (stories) and groups: the JID of the contact who
+    // actually POSTED/sent this message, so the Status view can group updates by
+    // poster. Null for ordinary 1:1 chats.
+    participant: text("participant"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => ({
@@ -86,6 +90,42 @@ export const waMessagesTable = pgTable(
   }),
 );
 export type WaMessage = typeof waMessagesTable.$inferSelect;
+
+/**
+ * WhatsApp call log. A linked/companion device only receives call
+ * NOTIFICATIONS (an "offer" and a terminal state) — NOT a full telephony
+ * record. We persist what is reliably available: who called, voice/video,
+ * and the outcome (incoming/missed/rejected/accepted). The talk DURATION of a
+ * call answered on the phone is generally NOT delivered to a linked device, so
+ * `durationSec` is usually null (surfaced honestly in the UI).
+ */
+export const waCallLogsTable = pgTable(
+  "wa_call_logs",
+  {
+    id: serial("id").primaryKey(),
+    callId: text("call_id").notNull(),
+    jid: text("jid").notNull(),
+    phone: text("phone").notNull(),
+    name: text("name"),
+    accountPhone: text("account_phone"),
+    outgoing: boolean("outgoing").notNull().default(false),
+    isVideo: boolean("is_video").notNull().default(false),
+    isGroup: boolean("is_group").notNull().default(false),
+    // incoming | missed | rejected | accepted | ongoing | unknown
+    outcome: text("outcome").notNull().default("incoming"),
+    rawStatus: text("raw_status"),
+    ts: bigint("ts", { mode: "number" }).notNull().default(0),
+    // Usually null — WhatsApp does not reliably expose answered-call duration to
+    // a linked device.
+    durationSec: integer("duration_sec"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => ({
+    callUnique: uniqueIndex("wa_call_logs_call_id_uq").on(t.callId),
+  }),
+);
+export type WaCallLog = typeof waCallLogsTable.$inferSelect;
 
 /** Application + connection logs (visible in User Logs + Admin Logs). */
 export const appLogsTable = pgTable("app_logs", {

@@ -57,6 +57,9 @@ export interface WAChatMsg {
   mediaMime?: string;
   mediaKind?: string; // image | video | audio | sticker | document
   fileName?: string;
+  /** JID of the actual poster/sender — set for status@broadcast (stories) and
+   *  group messages, so Status updates can be grouped by poster. */
+  participant?: string;
 }
 
 /** Normalize a phone number to international digits-only form for pairing.
@@ -122,6 +125,24 @@ type PersistListener = (userId: number, jid: string, phone: string, msg: WAChatM
  *  keeping the original content (anti-delete monitoring). */
 type DeleteListener = (userId: number, waMessageId: string) => void;
 
+/** A WhatsApp call notification captured from a linked device. A linked device
+ *  receives only call NOTIFICATIONS (offer + terminal state), so the talk
+ *  duration of a call answered on the phone is generally unavailable. */
+export interface WACall {
+  callId: string;
+  jid: string;
+  phone: string;
+  name?: string;
+  isVideo: boolean;
+  isGroup: boolean;
+  outgoing: boolean;
+  rawStatus: string;
+  outcome: "incoming" | "missed" | "rejected" | "accepted" | "ongoing" | "unknown";
+  ts: number;
+}
+/** Fired for every WhatsApp call notification so the DB can log it. */
+type CallListener = (userId: number, call: WACall) => void;
+
 export interface HydrateChat {
   meta: WAChat;
   msgs: WAChatMsg[];
@@ -141,6 +162,7 @@ class UserSession {
   private statusListeners: Set<StatusListener> = new Set();
   private persistListeners: Set<PersistListener> = new Set();
   private deleteListeners: Set<DeleteListener> = new Set();
+  private callListeners: Set<CallListener> = new Set();
   private chatStore = new Map<string, { meta: WAChat; msgs: WAChatMsg[] }>();
   /** Map of waMessageId → key, for sendReceipt round-trips. */
   private incomingKeys = new Map<string, { remoteJid: string; id: string; participant?: string; fromMe: boolean }>();
@@ -151,6 +173,7 @@ class UserSession {
   addStatusListener(fn: StatusListener) { this.statusListeners.add(fn); return () => this.statusListeners.delete(fn); }
   addPersistListener(fn: PersistListener) { this.persistListeners.add(fn); return () => this.persistListeners.delete(fn); }
   addDeleteListener(fn: DeleteListener) { this.deleteListeners.add(fn); return () => this.deleteListeners.delete(fn); }
+  addCallListener(fn: CallListener) { this.callListeners.add(fn); return () => this.callListeners.delete(fn); }
   private notifyPersist(jid: string, msg: WAChatMsg, history = false) {
     const phone = jid.split("@")[0];
     const name = this.chatStore.get(jid)?.meta.name;
@@ -158,6 +181,43 @@ class UserSession {
   }
   private notifyDelete(waMessageId: string) {
     for (const fn of this.deleteListeners) { try { fn(this.userId, waMessageId); } catch {} }
+  }
+  private notifyCall(call: WACall) {
+    for (const fn of this.callListeners) { try { fn(this.userId, call); } catch {} }
+  }
+  /** Map a Baileys `call` event into a call-log entry. A linked device only
+   *  receives call NOTIFICATIONS (an offer + a terminal state), not a full
+   *  telephony record — so we record who/what/outcome, never a reliable talk
+   *  duration. Outgoing calls placed from the phone are usually not delivered
+   *  here at all; we still defensively detect them via our own number. */
+  private handleCall(c: any) {
+    const callId: string = c?.id ?? `call-${Date.now()}`;
+    const fromJid: string = c?.from ?? c?.chatId ?? "";
+    if (!fromJid) return;
+    const ownNum = (this.state.phoneNumber ?? "").replace(/\D/g, "");
+    const fromNum = fromJid.split("@")[0].split(":")[0];
+    const outgoing = !!ownNum && fromNum === ownNum;
+    const counterpartJid = outgoing ? (c?.chatId ?? fromJid) : fromJid;
+    const phone = (counterpartJid.split("@")[0] || "").split(":")[0];
+    const rawStatus = String(c?.status ?? "");
+    let outcome: WACall["outcome"];
+    switch (rawStatus) {
+      case "offer":
+      case "ringing": outcome = outgoing ? "ongoing" : "incoming"; break;
+      case "timeout": outcome = "missed"; break;
+      case "reject": outcome = "rejected"; break;
+      case "accept": outcome = "accepted"; break;
+      default: outcome = "unknown";
+    }
+    const name =
+      this.chatStore.get(counterpartJid)?.meta.name ??
+      this.chatStore.get(`${phone}@s.whatsapp.net`)?.meta.name ??
+      undefined;
+    const ts = c?.date ? new Date(c.date).getTime() : Date.now();
+    this.notifyCall({
+      callId, jid: counterpartJid, phone, name,
+      isVideo: !!c?.isVideo, isGroup: !!c?.isGroup, outgoing, rawStatus, outcome, ts,
+    });
   }
 
   /** Load chat history from DB into the in-memory store (called on startup). */
@@ -366,7 +426,7 @@ class UserSession {
       display,
       raw,
       nameHint,
-      m: { id: msgId, text: display, fromMe, ts, status: fromMe ? 1 : 0, quotedText, quotedId, mediaKind, mediaMime, fileName },
+      m: { id: msgId, text: display, fromMe, ts, status: fromMe ? 1 : 0, quotedText, quotedId, mediaKind, mediaMime, fileName, participant: msg.key?.participant ?? undefined },
     };
   }
 
@@ -664,6 +724,12 @@ class UserSession {
         }
       }
     });
+
+    // Capture call notifications (incoming / missed / rejected / accepted) so the
+    // Calls log can mirror WhatsApp. A linked device receives notifications only.
+    sock.ev.on("call", (calls: BaileysEventMap["call"]) => {
+      for (const c of calls) this.handleCall(c);
+    });
   }
 
   /**
@@ -747,6 +813,7 @@ class MultiWhatsAppService {
   private globalStatusListeners: Set<StatusListener> = new Set();
   private globalPersistListeners: Set<PersistListener> = new Set();
   private globalDeleteListeners: Set<DeleteListener> = new Set();
+  private globalCallListeners: Set<CallListener> = new Set();
 
   addGlobalListener(fn: (state: UserWAState) => void) {
     this.globalListeners.add(fn);
@@ -763,6 +830,12 @@ class MultiWhatsAppService {
   addDeleteListener(fn: DeleteListener) {
     this.globalDeleteListeners.add(fn);
     return () => this.globalDeleteListeners.delete(fn);
+  }
+
+  /** Subscribe to call notifications across all sessions (Calls log). */
+  addCallListener(fn: CallListener) {
+    this.globalCallListeners.add(fn);
+    return () => this.globalCallListeners.delete(fn);
   }
 
   /** Load DB chat history into a session's in-memory store (call before connect). */
@@ -785,6 +858,9 @@ class MultiWhatsAppService {
       });
       sess.addDeleteListener((uid, waMessageId) => {
         for (const fn of this.globalDeleteListeners) { try { fn(uid, waMessageId); } catch {} }
+      });
+      sess.addCallListener((uid, call) => {
+        for (const fn of this.globalCallListeners) { try { fn(uid, call); } catch {} }
       });
       this.sessions.set(userId, sess);
     }

@@ -116,6 +116,42 @@ export interface WAMessage {
   hasMedia: boolean;
 }
 
+export interface WACallLog {
+  id: number;
+  callId: string;
+  jid: string;
+  phone: string;
+  name: string | null;
+  accountPhone: string | null;
+  outgoing: boolean;
+  isVideo: boolean;
+  isGroup: boolean;
+  outcome: "incoming" | "missed" | "rejected" | "accepted" | "ongoing" | "unknown";
+  rawStatus: string | null;
+  ts: number;
+  durationSec: number | null;
+}
+
+export interface StatusItem {
+  waMessageId: string;
+  text: string;
+  ts: number;
+  deleted: boolean;
+  mediaMime: string | null;
+  mediaKind: string | null;
+  fileName: string | null;
+  hasMedia: boolean;
+}
+
+export interface StatusGroup {
+  participant: string;
+  phone: string;
+  name: string | null;
+  latestTs: number;
+  count: number;
+  items: StatusItem[];
+}
+
 export interface AppLog {
   id: number;
   level: string;
