@@ -74,7 +74,7 @@ export default function Shell({
   }
 
   return (
-    <div className="min-h-screen bg-background flex flex-col max-w-md mx-auto relative overflow-hidden">
+    <div className="h-[100dvh] bg-background flex flex-col max-w-md mx-auto relative overflow-hidden">
       {!hideHeader && (
         <header className="flex items-center gap-3 px-4 h-14 bg-wa-header text-white shrink-0 shadow-md z-10">
           {back ? (

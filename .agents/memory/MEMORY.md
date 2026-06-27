@@ -1,1 +1,2 @@
 - [WhatsApp panel decisions](whatsapp-panel.md) — local QR rendering (no third-party leak) + admin is monitoring-only (no send route).
+- [VPS self-host deploy](vps-deploy.md) — Replit DATABASE_URL=internal `helium` (unreachable off-platform→own Postgres); pnpm11 ignored-builds exit-1 (run build binaries directly); pm2 restart keeps stale env (delete+start to reload).
