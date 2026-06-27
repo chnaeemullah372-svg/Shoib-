@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import Shell, { useRequirePanelAuth } from "./Shell";
 import { panel } from "@/lib/panelApi";
-import { Loader2, Save, User, Bell, DatabaseBackup, Globe, CalendarClock, Trash2, Info, Crown, KeyRound } from "lucide-react";
-import { isVip, setVip } from "@/lib/theme";
+import { Loader2, Save, User, Bell, DatabaseBackup, Globe, CalendarClock, Trash2, Info, Palette, Check } from "lucide-react";
+import { getTheme, setTheme, THEMES, type ThemeId } from "@/lib/theme";
 
 interface Settings {
   notifications?: boolean;
@@ -21,11 +21,16 @@ export default function SettingsPage() {
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
   const [cacheCleared, setCacheCleared] = useState(false);
-  const [vip, setVipState] = useState(isVip());
+  const [theme, setThemeState] = useState<ThemeId>(getTheme());
 
   function clearCache() {
     for (const k of Object.keys(localStorage)) {
-      if (k.startsWith("wa_") && !k.includes("token") && k !== "wa_theme_vip") localStorage.removeItem(k);
+      if (
+        k.startsWith("wa_") && !k.includes("token") &&
+        k !== "wa_theme_vip" && k !== "wa_theme"
+      ) {
+        localStorage.removeItem(k);
+      }
     }
     setCacheCleared(true);
     setTimeout(() => setCacheCleared(false), 2000);
@@ -41,13 +46,10 @@ export default function SettingsPage() {
     setBusy(true);
     setSaved(false);
     setError("");
-    if (s.pairingBrandCode && s.pairingBrandCode.length !== 8) {
-      setError("Pairing code theek 8 characters ka hona chahiye");
-      setBusy(false);
-      return;
-    }
     try {
-      await panel.put("/panel/settings", s);
+      // The pairing-code brand is admin-only now; never send it from the user side.
+      const { pairingBrandCode: _omit, ...payload } = s;
+      await panel.put("/panel/settings", payload);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (e: any) {
@@ -124,37 +126,41 @@ export default function SettingsPage() {
           >
             <option value="English">English</option>
             <option value="Urdu">Urdu</option>
+            <option value="Roman Urdu">Roman Urdu</option>
           </select>
         </div>
 
         <div className="rounded-2xl bg-card border border-border p-4">
-          <div className="flex items-center gap-2 mb-2">
-            <KeyRound className="w-4 h-4 text-primary" />
-            <p className="text-sm font-medium">Pairing Code Brand</p>
+          <div className="flex items-center gap-2 mb-3">
+            <Palette className="w-4 h-4 text-primary" />
+            <p className="text-sm font-medium">Theme</p>
           </div>
-          <input
-            value={s.pairingBrandCode || ""}
-            onChange={(e) =>
-              set("pairingBrandCode", e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8))
-            }
-            maxLength={8}
-            placeholder="HASANALI"
-            className="w-full rounded-xl bg-background border border-border px-4 py-3 text-center text-lg font-bold tracking-[0.4em] uppercase outline-none focus:border-primary"
-          />
-          <p className="text-xs text-muted-foreground mt-2">
-            Theek 8 characters (A–Z, 0–9). WhatsApp connect karte waqt yehi code OTP mein dikhega.
-          </p>
-          {error && <p className="text-xs text-destructive mt-2">{error}</p>}
+          <div className="grid grid-cols-2 gap-2">
+            {THEMES.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => { setTheme(t.id); setThemeState(t.id); }}
+                className={`relative flex items-center gap-3 rounded-xl border p-3 text-left transition ${
+                  theme === t.id ? "border-primary ring-1 ring-primary" : "border-border hover:border-primary/50"
+                }`}
+              >
+                <span className="flex shrink-0 -space-x-1.5">
+                  <span className="w-5 h-5 rounded-full border border-black/10" style={{ background: t.swatch[0] }} />
+                  <span className="w-5 h-5 rounded-full border border-black/10" style={{ background: t.swatch[1] }} />
+                </span>
+                <span className="min-w-0">
+                  <span className="block text-sm font-medium truncate">{t.label}</span>
+                  <span className="block text-xs text-muted-foreground truncate">{t.desc}</span>
+                </span>
+                {theme === t.id && <Check className="w-4 h-4 text-primary absolute top-2 right-2" />}
+              </button>
+            ))}
+          </div>
         </div>
 
+        {error && <p className="text-xs text-destructive">{error}</p>}
+
         <div className="rounded-2xl bg-card border border-border divide-y divide-border">
-          <Toggle
-            icon={Crown}
-            label="VIP Theme"
-            desc="Premium gold & emerald skin"
-            value={vip}
-            onChange={(v) => { setVip(v); setVipState(v); }}
-          />
           <button onClick={clearCache} className="w-full flex items-center gap-3 p-4 text-left">
             <Trash2 className="w-5 h-5 text-primary shrink-0" />
             <div className="flex-1">

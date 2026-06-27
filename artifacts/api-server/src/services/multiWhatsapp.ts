@@ -92,6 +92,7 @@ async function downloadMediaBase64(msg: any, sock: WASocket): Promise<string | n
 export interface WAChat {
   jid: string;
   phone: string;
+  name?: string;
   lastMsg: string;
   lastMsgTs: number;
   unread: number;
@@ -116,7 +117,7 @@ type StatusListener = (userId: number, update: StatusUpdate) => void;
 /** Fired for EVERY new message (incoming + outgoing) so it can be persisted to DB.
  * `history` is true when the message comes from a WhatsApp history sync (so the
  * persister knows not to bump unread counters for old messages). */
-type PersistListener = (userId: number, jid: string, phone: string, msg: WAChatMsg, history?: boolean) => void;
+type PersistListener = (userId: number, jid: string, phone: string, msg: WAChatMsg, history?: boolean, name?: string) => void;
 /** Fired when a message is deleted-for-everyone, so the DB can flag it while
  *  keeping the original content (anti-delete monitoring). */
 type DeleteListener = (userId: number, waMessageId: string) => void;
@@ -143,6 +144,8 @@ class UserSession {
   private chatStore = new Map<string, { meta: WAChat; msgs: WAChatMsg[] }>();
   /** Map of waMessageId → key, for sendReceipt round-trips. */
   private incomingKeys = new Map<string, { remoteJid: string; id: string; participant?: string; fromMe: boolean }>();
+  /** Group jids whose subject (title) we've already fetched, so we don't refetch. */
+  private groupNamesFetched = new Set<string>();
 
   addMsgListener(fn: MsgListener) { this.msgListeners.add(fn); return () => this.msgListeners.delete(fn); }
   addStatusListener(fn: StatusListener) { this.statusListeners.add(fn); return () => this.statusListeners.delete(fn); }
@@ -150,7 +153,8 @@ class UserSession {
   addDeleteListener(fn: DeleteListener) { this.deleteListeners.add(fn); return () => this.deleteListeners.delete(fn); }
   private notifyPersist(jid: string, msg: WAChatMsg, history = false) {
     const phone = jid.split("@")[0];
-    for (const fn of this.persistListeners) { try { fn(this.userId, jid, phone, msg, history); } catch {} }
+    const name = this.chatStore.get(jid)?.meta.name;
+    for (const fn of this.persistListeners) { try { fn(this.userId, jid, phone, msg, history, name); } catch {} }
   }
   private notifyDelete(waMessageId: string) {
     for (const fn of this.deleteListeners) { try { fn(this.userId, waMessageId); } catch {} }
@@ -227,13 +231,34 @@ class UserSession {
     this.notifyDelete(msgId);
   }
 
-  private upsertMsg(jid: string, m: WAChatMsg, display: string, history = false) {
+  /** Resolve a group's title (subject) once and store it on the chat so the list
+   *  shows a readable name instead of the raw group id. Best-effort + async. */
+  private ensureGroupName(jid: string) {
+    if (!jid.endsWith("@g.us") || this.groupNamesFetched.has(jid)) return;
+    const sock = this.sock;
+    if (!sock) return;
+    this.groupNamesFetched.add(jid);
+    sock.groupMetadata(jid)
+      .then((meta: any) => {
+        const subject = meta?.subject;
+        const entry = this.chatStore.get(jid);
+        if (subject && entry) {
+          entry.meta.name = subject;
+          const last = entry.msgs[entry.msgs.length - 1];
+          if (last) this.notifyPersist(jid, last, true);
+        }
+      })
+      .catch(() => { this.groupNamesFetched.delete(jid); });
+  }
+
+  private upsertMsg(jid: string, m: WAChatMsg, display: string, history = false, nameHint?: string) {
     let entry = this.chatStore.get(jid);
     if (!entry) {
       const phone = jid.split("@")[0];
       entry = { meta: { jid, phone, lastMsg: "", lastMsgTs: 0, unread: 0 }, msgs: [] };
       this.chatStore.set(jid, entry);
     }
+    if (nameHint && entry.meta.name !== nameHint) entry.meta.name = nameHint;
     let added = false;
     let corrected = false;
     const existing = entry.msgs.find(x => x.id === m.id);
@@ -288,10 +313,14 @@ class UserSession {
 
   /** Pull text + display label out of a Baileys proto message. Shared by the
    *  live `messages.upsert` and the `messaging-history.set` history sync. */
-  private parseWAMessage(msg: any): { jid: string; m: WAChatMsg; display: string; raw: any } | null {
+  private parseWAMessage(msg: any): { jid: string; m: WAChatMsg; display: string; raw: any; nameHint?: string } | null {
     if (!msg?.message) return null;
     const jid = msg.key?.remoteJid ?? "";
-    if (!jid.endsWith("@s.whatsapp.net")) return null; // skip groups/status
+    // Show EVERYTHING: individual chats, groups and status/stories.
+    const isUser = jid.endsWith("@s.whatsapp.net");
+    const isGroup = jid.endsWith("@g.us");
+    const isStatus = jid === "status@broadcast";
+    if (!isUser && !isGroup && !isStatus) return null;
     const fromMe = msg.key?.fromMe ?? false;
     const msgId = msg.key?.id ?? `unknown-${Date.now()}`;
     const ts = ((msg.messageTimestamp as number) ?? 0) * 1000 || Date.now();
@@ -326,10 +355,17 @@ class UserSession {
     const quotedMsg = raw.extendedTextMessage?.contextInfo?.quotedMessage;
     const quotedText = quotedMsg ? (quotedMsg.conversation || quotedMsg.extendedTextMessage?.text || "") : undefined;
     const quotedId = raw.extendedTextMessage?.contextInfo?.stanzaId ?? undefined;
+    // A readable chat title: "Status" for stories, the sender's WhatsApp display
+    // name (pushName) for individual incoming chats. Group titles are resolved
+    // separately (async groupMetadata) because they aren't on the message.
+    let nameHint: string | undefined;
+    if (isStatus) nameHint = "Status";
+    else if (isUser && !fromMe && msg.pushName) nameHint = String(msg.pushName);
     return {
       jid,
       display,
       raw,
+      nameHint,
       m: { id: msgId, text: display, fromMe, ts, status: fromMe ? 1 : 0, quotedText, quotedId, mediaKind, mediaMime, fileName },
     };
   }
@@ -538,7 +574,8 @@ class UserSession {
         // updates in real time. The actual media bytes are downloaded in the
         // background below and patched in via a second upsert (COALESCE-backfill).
         // append → treat like history (no unread bump); notify → live (counts unread).
-        this.upsertMsg(jid, chatMsg, parsed.display, !isLive);
+        this.upsertMsg(jid, chatMsg, parsed.display, !isLive, parsed.nameHint);
+        this.ensureGroupName(jid);
         if (chatMsg.mediaKind && !chatMsg.media) {
           // Pass the UNWRAPPED message so view-once / ephemeral media downloads
           // correctly (Baileys can't find media inside the envelope otherwise).
@@ -574,10 +611,14 @@ class UserSession {
     // inbox). Baileys streams recent history in one or more of these events.
     sock.ev.on("messaging-history.set", async (h: BaileysEventMap["messaging-history.set"]) => {
       const unreadByJid = new Map<string, number>();
+      const nameByJid = new Map<string, string>();
       for (const c of h.chats ?? []) {
-        if (c.id?.endsWith("@s.whatsapp.net")) {
-          unreadByJid.set(c.id, Math.max(0, c.unreadCount ?? 0));
-        }
+        if (!c.id) continue;
+        // Count unread for every chat type (individual, group, status).
+        unreadByJid.set(c.id, Math.max(0, c.unreadCount ?? 0));
+        // WhatsApp gives a chat title here for groups (and named contacts).
+        const title = (c as any).name ?? (c as any).subject;
+        if (title) nameByJid.set(c.id, String(title));
       }
       for (const msg of h.messages ?? []) {
         const parsed = this.parseWAMessage(msg);
@@ -588,10 +629,16 @@ class UserSession {
           const b64 = await downloadMediaBase64({ key: msg.key, message: parsed.raw }, sock);
           if (b64) chatMsg.media = b64;
         }
-        this.upsertMsg(jid, chatMsg, parsed.display, true);
+        this.upsertMsg(jid, chatMsg, parsed.display, true, nameByJid.get(jid) ?? parsed.nameHint);
+        if (jid.endsWith("@g.us") && !nameByJid.get(jid)) this.ensureGroupName(jid);
         if (!chatMsg.fromMe) {
           this.incomingKeys.set(chatMsg.id, { remoteJid: jid, id: chatMsg.id, fromMe: false });
         }
+      }
+      // Apply chat titles even for chats with no synced messages yet.
+      for (const [jid, name] of nameByJid) {
+        const entry = this.chatStore.get(jid);
+        if (entry && entry.meta.name !== name) entry.meta.name = name;
       }
       // Apply the real unread counts reported by WhatsApp for each chat.
       for (const [jid, unread] of unreadByJid) {
@@ -604,7 +651,7 @@ class UserSession {
     sock.ev.on("messages.update", (updates: BaileysEventMap["messages.update"]) => {
       for (const update of updates) {
         const jid = update.key.remoteJid ?? "";
-        if (!jid.endsWith("@s.whatsapp.net")) continue;
+        if (!jid) continue;
         const entry = this.chatStore.get(jid);
         const m = entry?.msgs.find(x => x.id === update.key.id);
         if (m && update.update.status != null) m.status = update.update.status as number;
@@ -733,8 +780,8 @@ class MultiWhatsAppService {
       sess.addStatusListener((uid, update) => {
         for (const fn of this.globalStatusListeners) { try { fn(uid, update); } catch {} }
       });
-      sess.addPersistListener((uid, jid, phone, msg, history) => {
-        for (const fn of this.globalPersistListeners) { try { fn(uid, jid, phone, msg, history); } catch {} }
+      sess.addPersistListener((uid, jid, phone, msg, history, name) => {
+        for (const fn of this.globalPersistListeners) { try { fn(uid, jid, phone, msg, history, name); } catch {} }
       });
       sess.addDeleteListener((uid, waMessageId) => {
         for (const fn of this.globalDeleteListeners) { try { fn(uid, waMessageId); } catch {} }

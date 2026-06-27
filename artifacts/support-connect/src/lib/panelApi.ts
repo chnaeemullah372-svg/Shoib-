@@ -49,6 +49,8 @@ export const panel = {
   raw: (url: string) => fetch(`${API}${url}`, { headers: headers(panelAuth.get()) }),
   mediaUrl: (msgId: string) =>
     `${API}/panel/media/${encodeURIComponent(msgId)}?t=${encodeURIComponent(panelAuth.get() ?? "")}`,
+  eventsUrl: () =>
+    `${API}/panel/events?t=${encodeURIComponent(panelAuth.get() ?? "")}`,
 };
 
 // ── Admin client ──────────────────────────────────────────────────

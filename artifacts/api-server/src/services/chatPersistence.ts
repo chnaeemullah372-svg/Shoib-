@@ -38,7 +38,7 @@ export async function logEvent(message: string, level = "info", source = "system
  *  When `history` is true the message came from a WhatsApp history sync, so we
  *  never bump the unread counter (those messages are old) and only advance the
  *  chat's last-message preview when this message is actually newer. */
-async function persistMessage(jid: string, phone: string, msg: WAChatMsg, history = false) {
+async function persistMessage(jid: string, phone: string, msg: WAChatMsg, history = false, name?: string) {
   try {
     // The WhatsApp number that is currently linked — every chat we capture is
     // tagged with it so the admin can browse each connected number separately.
@@ -87,6 +87,7 @@ async function persistMessage(jid: string, phone: string, msg: WAChatMsg, histor
       .values({
         jid,
         phone,
+        name: name ?? null,
         lastMsg: msg.text,
         lastMsgTs: msg.ts,
         unread: 0,
@@ -99,6 +100,8 @@ async function persistMessage(jid: string, phone: string, msg: WAChatMsg, histor
           // arrive out of order).
           lastMsg: sql`CASE WHEN ${msg.ts} >= ${waChatsTable.lastMsgTs} THEN ${msg.text} ELSE ${waChatsTable.lastMsg} END`,
           lastMsgTs: sql`GREATEST(${waChatsTable.lastMsgTs}, ${msg.ts})`,
+          // Fill in / refresh the readable chat title when we learn it.
+          name: sql`COALESCE(${name ?? null}, ${waChatsTable.name})`,
           // Keep the first owning account; only fill it in if it was unknown.
           accountPhone: sql`COALESCE(${waChatsTable.accountPhone}, ${accountPhone})`,
           unread:
@@ -205,6 +208,7 @@ export async function loadHistory(): Promise<HydrateChat[]> {
       meta: {
         jid: c.jid,
         phone: c.phone,
+        name: c.name ?? undefined,
         lastMsg: c.lastMsg,
         lastMsgTs: c.lastMsgTs,
         unread: c.unread,
@@ -311,8 +315,8 @@ export async function startPersistence() {
 
   await seedDefaultAdmin();
 
-  multiWA.addPersistListener((_uid, jid, phone, msg, history) => {
-    void persistMessage(jid, phone, msg, history);
+  multiWA.addPersistListener((_uid, jid, phone, msg, history, name) => {
+    void persistMessage(jid, phone, msg, history, name);
   });
   multiWA.addStatusListener((_uid, update) => {
     void persistStatus(update.waMessageId, update.status);

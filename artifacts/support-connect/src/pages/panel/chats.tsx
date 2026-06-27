@@ -81,15 +81,43 @@ export default function Chats() {
       .catch(handleAuthError);
   }, [handleAuthError]);
 
+  // A counter bumped on every realtime event; the open Conversation watches it
+  // and reloads instantly so a new/deleted message shows without waiting on poll.
+  const [liveTick, setLiveTick] = useState(0);
+
   useEffect(() => {
     if (!user) return;
     loadChats();
     loadStatus();
+    // Polling stays as a safety net (much slower now); SSE drives instant updates.
     const t = setInterval(() => {
       loadChats();
       loadStatus();
-    }, 4000);
+    }, 15000);
     return () => clearInterval(t);
+  }, [user, loadChats, loadStatus]);
+
+  // INSTANT UPDATES: subscribe to the server's event stream. Any new message,
+  // deletion, or connection-state change refreshes the inbox immediately. The
+  // browser auto-reconnects the EventSource if the connection drops.
+  useEffect(() => {
+    if (!user) return;
+    let debounce: ReturnType<typeof setTimeout> | null = null;
+    const bump = () => {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(() => {
+        loadChats();
+        setLiveTick((n) => n + 1);
+      }, 250);
+    };
+    const es = new EventSource(panel.eventsUrl());
+    es.addEventListener("message", bump);
+    es.addEventListener("delete", bump);
+    es.addEventListener("state", () => loadStatus());
+    return () => {
+      if (debounce) clearTimeout(debounce);
+      es.close();
+    };
   }, [user, loadChats, loadStatus]);
 
   // Connect-first (WhatsApp-Web style): until WhatsApp is linked, send the user
@@ -126,6 +154,7 @@ export default function Chats() {
       <Conversation
         jid={activeJid}
         chat={chats.find((c) => c.jid === activeJid)}
+        liveTick={liveTick}
         onBack={() => {
           // Prefer unwinding the history entry we pushed (so the device back
           // button and this ◀ stay in sync). If for any reason it isn't there,
@@ -293,7 +322,7 @@ function NewChatSheet({ onClose, onStart }: { onClose: () => void; onStart: (jid
   );
 }
 
-function Conversation({ jid, chat, onBack }: { jid: string; chat?: WAChat; onBack: () => void }) {
+function Conversation({ jid, chat, liveTick, onBack }: { jid: string; chat?: WAChat; liveTick: number; onBack: () => void }) {
   const [messages, setMessages] = useState<WAMessage[]>([]);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
@@ -312,9 +341,16 @@ function Conversation({ jid, chat, onBack }: { jid: string; chat?: WAChat; onBac
   useEffect(() => {
     load();
     panel.post(`/panel/chats/${encodeURIComponent(jid)}/read`).catch(() => {});
-    const t = setInterval(load, 3000);
+    // Slow poll as a safety net; the live event below drives instant refresh.
+    const t = setInterval(load, 12000);
     return () => clearInterval(t);
   }, [load, jid]);
+
+  // INSTANT UPDATES: reload this conversation the moment the parent receives a
+  // realtime event (new/deleted message) so the open chat updates without delay.
+  useEffect(() => {
+    if (liveTick > 0) load();
+  }, [liveTick, load]);
 
   // Opening a different chat must re-jump to its newest message.
   useEffect(() => {

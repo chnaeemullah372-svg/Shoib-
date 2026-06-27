@@ -192,6 +192,57 @@ router.get("/panel/chats", async (req, res): Promise<void> => {
   res.json(await getAllChats());
 });
 
+/**
+ * INSTANT UPDATES: a Server-Sent-Events stream the panel subscribes to so the
+ * inbox refreshes the moment anything changes — new message, deleted message,
+ * or a WhatsApp connection state change — with no polling delay. Token is
+ * accepted via `?t=` because EventSource can't send an Authorization header.
+ */
+router.get("/panel/events", async (req, res): Promise<void> => {
+  const queryToken = req.query.t;
+  if (typeof queryToken === "string" && !req.headers.authorization) {
+    req.headers.authorization = `Bearer ${queryToken}`;
+  }
+  if (!(await requirePanelUser(req, res))) return;
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  const send = (event: string, data: unknown) => {
+    try {
+      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    } catch {}
+  };
+
+  send("ready", { ts: Date.now() });
+
+  const offPersist = multiWA.addPersistListener((_uid, jid, _phone, msg) => {
+    send("message", { jid, fromMe: msg.fromMe, ts: msg.ts });
+  });
+  const offDelete = multiWA.addDeleteListener((_uid, waMessageId) => {
+    send("delete", { waMessageId });
+  });
+  const offState = multiWA.addUserListener(PANEL_USER_ID, (state) => {
+    send("state", { status: state.status });
+  });
+
+  // Heartbeat so proxies don't drop an idle connection.
+  const heartbeat = setInterval(() => {
+    try { res.write(`: ping\n\n`); } catch {}
+  }, 25_000);
+
+  req.on("close", () => {
+    clearInterval(heartbeat);
+    offPersist();
+    offDelete();
+    offState();
+    res.end();
+  });
+});
+
 router.get("/panel/chats/:jid/messages", async (req, res): Promise<void> => {
   if (!(await requirePanelUser(req, res))) return;
   const rows = await getChatMessagesDb(req.params.jid);

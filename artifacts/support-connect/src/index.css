@@ -249,6 +249,222 @@
   --wa-header: 174 40% 7%;
 }
 
+/* ── Midnight — dark slate & teal ─────────────────────────────── */
+.midnight {
+  --background: 222 30% 8%;
+  --foreground: 210 30% 92%;
+  --border: 217 22% 20%;
+
+  --card: 222 28% 11%;
+  --card-foreground: 210 30% 92%;
+  --card-border: 217 22% 20%;
+
+  --popover: 222 28% 11%;
+  --popover-foreground: 210 30% 92%;
+  --popover-border: 217 22% 20%;
+
+  --primary: 172 66% 45%;
+  --primary-foreground: 222 40% 8%;
+
+  --secondary: 217 20% 16%;
+  --secondary-foreground: 210 25% 88%;
+
+  --muted: 217 20% 16%;
+  --muted-foreground: 215 16% 62%;
+
+  --accent: 172 40% 18%;
+  --accent-foreground: 172 70% 70%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+
+  --sidebar: 222 28% 11%;
+  --sidebar-foreground: 210 25% 82%;
+  --sidebar-border: 217 22% 20%;
+  --sidebar-primary: 172 66% 45%;
+  --sidebar-primary-foreground: 222 40% 8%;
+  --sidebar-accent: 217 22% 16%;
+  --sidebar-accent-foreground: 210 30% 92%;
+  --sidebar-ring: 172 66% 45%;
+
+  --input: 217 22% 22%;
+  --ring: 172 66% 45%;
+
+  --chart-1: 172 66% 45%;
+  --chart-2: 200 80% 55%;
+  --chart-3: 260 70% 65%;
+  --chart-4: 25 90% 55%;
+  --chart-5: 320 65% 60%;
+
+  --wa-bg: 222 30% 8%;
+  --wa-panel: 222 28% 11%;
+  --wa-bubble-out: 172 35% 20%;
+  --wa-bubble-in: 217 20% 16%;
+  --wa-header: 222 34% 10%;
+}
+
+/* ── Royal — deep purple & violet ─────────────────────────────── */
+.royal {
+  --background: 263 35% 8%;
+  --foreground: 270 30% 93%;
+  --border: 263 25% 22%;
+
+  --card: 263 32% 12%;
+  --card-foreground: 270 30% 93%;
+  --card-border: 263 25% 22%;
+
+  --popover: 263 32% 12%;
+  --popover-foreground: 270 30% 93%;
+  --popover-border: 263 25% 22%;
+
+  --primary: 263 70% 60%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 263 22% 18%;
+  --secondary-foreground: 270 25% 88%;
+
+  --muted: 263 22% 18%;
+  --muted-foreground: 265 18% 66%;
+
+  --accent: 263 40% 22%;
+  --accent-foreground: 270 80% 78%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+
+  --sidebar: 263 32% 12%;
+  --sidebar-foreground: 270 25% 84%;
+  --sidebar-border: 263 25% 22%;
+  --sidebar-primary: 263 70% 60%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 263 24% 18%;
+  --sidebar-accent-foreground: 270 30% 93%;
+  --sidebar-ring: 263 70% 60%;
+
+  --input: 263 25% 24%;
+  --ring: 263 70% 60%;
+
+  --chart-1: 263 70% 60%;
+  --chart-2: 290 65% 62%;
+  --chart-3: 200 80% 55%;
+  --chart-4: 43 74% 52%;
+  --chart-5: 160 70% 45%;
+
+  --wa-bg: 263 35% 8%;
+  --wa-panel: 263 32% 12%;
+  --wa-bubble-out: 263 45% 26%;
+  --wa-bubble-in: 263 22% 18%;
+  --wa-header: 263 38% 11%;
+}
+
+/* ── Rose — soft rose & pink ──────────────────────────────────── */
+.rose {
+  --background: 340 30% 9%;
+  --foreground: 350 30% 94%;
+  --border: 342 22% 22%;
+
+  --card: 340 28% 12%;
+  --card-foreground: 350 30% 94%;
+  --card-border: 342 22% 22%;
+
+  --popover: 340 28% 12%;
+  --popover-foreground: 350 30% 94%;
+  --popover-border: 342 22% 22%;
+
+  --primary: 347 77% 55%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 342 20% 18%;
+  --secondary-foreground: 350 25% 88%;
+
+  --muted: 342 20% 18%;
+  --muted-foreground: 345 16% 66%;
+
+  --accent: 347 40% 22%;
+  --accent-foreground: 347 85% 78%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+
+  --sidebar: 340 28% 12%;
+  --sidebar-foreground: 350 25% 84%;
+  --sidebar-border: 342 22% 22%;
+  --sidebar-primary: 347 77% 55%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 342 22% 18%;
+  --sidebar-accent-foreground: 350 30% 94%;
+  --sidebar-ring: 347 77% 55%;
+
+  --input: 342 24% 24%;
+  --ring: 347 77% 55%;
+
+  --chart-1: 347 77% 55%;
+  --chart-2: 320 65% 60%;
+  --chart-3: 25 90% 60%;
+  --chart-4: 263 65% 65%;
+  --chart-5: 200 75% 55%;
+
+  --wa-bg: 340 30% 9%;
+  --wa-panel: 340 28% 12%;
+  --wa-bubble-out: 347 45% 26%;
+  --wa-bubble-in: 342 20% 18%;
+  --wa-header: 340 34% 11%;
+}
+
+/* ── Ocean — cool blue & sky ──────────────────────────────────── */
+.ocean {
+  --background: 210 40% 8%;
+  --foreground: 205 30% 93%;
+  --border: 208 25% 22%;
+
+  --card: 210 36% 11%;
+  --card-foreground: 205 30% 93%;
+  --card-border: 208 25% 22%;
+
+  --popover: 210 36% 11%;
+  --popover-foreground: 205 30% 93%;
+  --popover-border: 208 25% 22%;
+
+  --primary: 199 89% 48%;
+  --primary-foreground: 0 0% 100%;
+
+  --secondary: 208 24% 17%;
+  --secondary-foreground: 205 25% 88%;
+
+  --muted: 208 24% 17%;
+  --muted-foreground: 206 18% 65%;
+
+  --accent: 199 45% 20%;
+  --accent-foreground: 199 85% 72%;
+
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 0 0% 100%;
+
+  --sidebar: 210 36% 11%;
+  --sidebar-foreground: 205 25% 84%;
+  --sidebar-border: 208 25% 22%;
+  --sidebar-primary: 199 89% 48%;
+  --sidebar-primary-foreground: 0 0% 100%;
+  --sidebar-accent: 208 26% 17%;
+  --sidebar-accent-foreground: 205 30% 93%;
+  --sidebar-ring: 199 89% 48%;
+
+  --input: 208 26% 24%;
+  --ring: 199 89% 48%;
+
+  --chart-1: 199 89% 48%;
+  --chart-2: 172 66% 45%;
+  --chart-3: 263 65% 65%;
+  --chart-4: 43 74% 52%;
+  --chart-5: 320 60% 60%;
+
+  --wa-bg: 210 40% 8%;
+  --wa-panel: 210 36% 11%;
+  --wa-bubble-out: 199 45% 24%;
+  --wa-bubble-in: 208 24% 17%;
+  --wa-header: 210 40% 10%;
+}
+
 @layer base {
   * {
     @apply border-border;
